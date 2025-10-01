@@ -70,7 +70,11 @@ def contar_lineas_distribuido(archivos):
     if rank == 0:
         # normalizamos a Path
         archivos = [Path(a) for a in archivos]
+        # Asegurar que tenemos al menos un archivo por proceso
         trozos = chunks(archivos, size)
+        # Rellenar con listas vacías si hay más procesos que archivos
+        while len(trozos) < size:
+            trozos.append([])
     else:
         trozos = None
 
@@ -93,8 +97,9 @@ def contar_lineas_distribuido(archivos):
         # combinar dicts (si un mismo archivo aparece, sumamos por si acaso)
         combinado = {}
         for d in resultados:
-            for k, v in d.items():
-                combinado[k] = combinado.get(k, 0) + v
+            if d:  # Solo procesar si el dict no está vacío
+                for k, v in d.items():
+                    combinado[k] = combinado.get(k, 0) + v
         return combinado, total_global
     return None, None
 
