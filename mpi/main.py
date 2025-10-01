@@ -13,6 +13,8 @@ size = comm.Get_size()
 def chunks(lst, k):
     """Divide lst en k sublistas (lo más balanceadas posible)."""
     n = len(lst)
+    if n == 0:
+        return [[] for _ in range(k)]
     base, sobra = divmod(n, k)
     out = []
     start = 0
@@ -58,7 +60,9 @@ def contar_lineas_en_archivo(path: Path) -> int:
     try:
         with path.open('r', encoding='utf-8', errors='ignore') as f:
             return sum(1 for _ in f)
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError, OSError) as e:
+        if rank == 0:  # Solo mostrar error en proceso principal
+            print(f"⚠️  Error leyendo {path}: {e}")
         return 0
 
 def contar_lineas_distribuido(archivos):
@@ -130,6 +134,17 @@ def main():
     parser.add_argument("--dummy-n", type=int, default=4, help="Cantidad de archivos dummy")
     parser.add_argument("--dummy-lines", type=int, default=100000, help="Líneas por archivo dummy")
     args = parser.parse_args()
+    
+    # Validación de argumentos
+    if args.pi_samples <= 0:
+        if rank == 0:
+            print("❌ Error: --pi-samples debe ser mayor que 0")
+        exit(1)
+    
+    if args.dummy_n <= 0 or args.dummy_lines <= 0:
+        if rank == 0:
+            print("❌ Error: --dummy-n y --dummy-lines deben ser mayores que 0")
+        exit(1)
 
     # ------------------- Cálculo distribuido de π -------------------
     if rank == 0:
@@ -161,11 +176,18 @@ def main():
             print("[I/O] No se proporcionaron archivos. Sáltandose esta parte.\n")
     comm.Barrier()
 
+    # IMPORTANTE: Todos los procesos deben participar en el conteo
+    # para evitar deadlocks en gather/reduce
+    t2 = MPI.Wtime()
     if archivos:
-        t2 = MPI.Wtime()
         detalle, total = contar_lineas_distribuido(archivos)
-        t3 = MPI.Wtime()
-        if rank == 0:
+    else:
+        # Si no hay archivos, todos los procesos deben participar con datos vacíos
+        detalle, total = contar_lineas_distribuido([])
+    t3 = MPI.Wtime()
+    
+    if rank == 0:
+        if archivos:
             print("[I/O] Resultados por archivo:")
             # Muestra algunos (o todos si son pocos)
             mostrar = min(len(detalle), 8)
@@ -177,6 +199,8 @@ def main():
             if len(detalle) > mostrar:
                 print(f"   ... y {len(detalle) - mostrar} más")
             print(f"[I/O] Total de líneas (global) = {total:,}  | tiempo: {t3 - t2:.3f} s\n")
+        else:
+            print(f"[I/O] No se procesaron archivos  | tiempo: {t3 - t2:.3f} s\n")
 
     if rank == 0:
         print("✅ Demo MPI finalizada.")
